@@ -132,8 +132,9 @@ def get_args_parser():
         "--position_embedding",
         default="sine",
         type=str,
-        choices=("sine", "learned"),
-        help="Type of positional embedding to use on top of the image features",
+        choices=("sine", "learned", "relative"),
+        help="Type of positional embedding: sine/learned (absolute on grid); "
+        "relative = encoder self-attn uses 2D relative bias, decoder still uses sine on keys",
     )
 
     # Transformer

@@ -16,6 +16,8 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from transformers import RobertaModel, RobertaTokenizerFast
 
+from .relative_2d_bias import Relative2DPositionBias
+
 
 class Transformer(nn.Module):
     def __init__(
@@ -33,11 +35,25 @@ class Transformer(nn.Module):
         text_encoder_type="roberta-base",
         freeze_text_encoder=False,
         contrastive_loss=False,
+        position_embedding="sine",
     ):
         super().__init__()
 
         self.pass_pos_and_query = pass_pos_and_query
-        encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, activation, normalize_before)
+        self.position_embedding = position_embedding
+        use_encoder_relative = position_embedding == "relative"
+        self.relative_encoder = use_encoder_relative
+        self.relative_bias_module = Relative2DPositionBias(max_offset=49) if use_encoder_relative else None
+
+        encoder_layer = TransformerEncoderLayer(
+            d_model,
+            nhead,
+            dim_feedforward,
+            dropout,
+            activation,
+            normalize_before,
+            use_encoder_relative=use_encoder_relative,
+        )
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
         self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
 
@@ -139,7 +155,16 @@ class Transformer(nn.Module):
             # Pad the pos_embed with 0 so that the addition will be a no-op for the text tokens
             pos_embed = torch.cat([pos_embed, torch.zeros_like(text_memory_resized)], dim=0)
 
-            img_memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
+            encoder_attn_bias = None
+            if self.relative_encoder and self.relative_bias_module is not None:
+                has_cls = self.CLS is not None
+                encoder_attn_bias = self.relative_bias_module.build_full_bias(
+                    h, w, src.shape[0], has_cls, src.device, src.dtype
+                )
+
+            img_memory = self.encoder(
+                src, src_key_padding_mask=mask, pos=pos_embed, encoder_attn_bias=encoder_attn_bias
+            )
 
             text_memory = img_memory[-len(text_memory_resized) :]
 
@@ -191,12 +216,19 @@ class TransformerEncoder(nn.Module):
         mask: Optional[Tensor] = None,
         src_key_padding_mask: Optional[Tensor] = None,
         pos: Optional[Tensor] = None,
+        encoder_attn_bias: Optional[Tensor] = None,
     ):
 
         output = src
 
         for layer in self.layers:
-            output = layer(output, src_mask=mask, src_key_padding_mask=src_key_padding_mask, pos=pos)
+            output = layer(
+                output,
+                src_mask=mask,
+                src_key_padding_mask=src_key_padding_mask,
+                pos=pos,
+                encoder_attn_bias=encoder_attn_bias,
+            )
 
         if self.norm is not None:
             output = self.norm(output)
@@ -258,8 +290,18 @@ class TransformerDecoder(nn.Module):
 
 
 class TransformerEncoderLayer(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1, activation="relu", normalize_before=False):
+    def __init__(
+        self,
+        d_model,
+        nhead,
+        dim_feedforward=2048,
+        dropout=0.1,
+        activation="relu",
+        normalize_before=False,
+        use_encoder_relative=False,
+    ):
         super().__init__()
+        self.use_encoder_relative = use_encoder_relative
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
@@ -283,9 +325,19 @@ class TransformerEncoderLayer(nn.Module):
         src_mask: Optional[Tensor] = None,
         src_key_padding_mask: Optional[Tensor] = None,
         pos: Optional[Tensor] = None,
+        encoder_attn_bias: Optional[Tensor] = None,
     ):
-        q = k = self.with_pos_embed(src, pos)
-        src2 = self.self_attn(q, k, value=src, attn_mask=src_mask, key_padding_mask=src_key_padding_mask)[0]
+        if self.use_encoder_relative:
+            q = k = src
+        else:
+            q = k = self.with_pos_embed(src, pos)
+        src2 = self.self_attn(
+            q,
+            k,
+            value=src,
+            attn_mask=encoder_attn_bias if encoder_attn_bias is not None else src_mask,
+            key_padding_mask=src_key_padding_mask,
+        )[0]
         src = src + self.dropout1(src2)
         src = self.norm1(src)
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
@@ -299,10 +351,20 @@ class TransformerEncoderLayer(nn.Module):
         src_mask: Optional[Tensor] = None,
         src_key_padding_mask: Optional[Tensor] = None,
         pos: Optional[Tensor] = None,
+        encoder_attn_bias: Optional[Tensor] = None,
     ):
         src2 = self.norm1(src)
-        q = k = self.with_pos_embed(src2, pos)
-        src2 = self.self_attn(q, k, value=src2, attn_mask=src_mask, key_padding_mask=src_key_padding_mask)[0]
+        if self.use_encoder_relative:
+            q = k = src2
+        else:
+            q = k = self.with_pos_embed(src2, pos)
+        src2 = self.self_attn(
+            q,
+            k,
+            value=src2,
+            attn_mask=encoder_attn_bias if encoder_attn_bias is not None else src_mask,
+            key_padding_mask=src_key_padding_mask,
+        )[0]
         src = src + self.dropout1(src2)
         src2 = self.norm2(src)
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
@@ -315,10 +377,11 @@ class TransformerEncoderLayer(nn.Module):
         src_mask: Optional[Tensor] = None,
         src_key_padding_mask: Optional[Tensor] = None,
         pos: Optional[Tensor] = None,
+        encoder_attn_bias: Optional[Tensor] = None,
     ):
         if self.normalize_before:
-            return self.forward_pre(src, src_mask, src_key_padding_mask, pos)
-        return self.forward_post(src, src_mask, src_key_padding_mask, pos)
+            return self.forward_pre(src, src_mask, src_key_padding_mask, pos, encoder_attn_bias)
+        return self.forward_post(src, src_mask, src_key_padding_mask, pos, encoder_attn_bias)
 
 
 class TransformerDecoderLayer(nn.Module):
@@ -500,6 +563,7 @@ def build_transformer(args):
         text_encoder_type=args.text_encoder_type,
         freeze_text_encoder=args.freeze_text_encoder,
         contrastive_loss=args.contrastive_loss,
+        position_embedding=getattr(args, "position_embedding", "sine"),
     )
 
 

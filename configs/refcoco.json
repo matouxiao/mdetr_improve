@@ -3,7 +3,7 @@
     "combine_datasets_val": ["refexp"],
     "refexp_dataset_name": "refcoco",
     "coco_path": "/workapp1219/detr/mdetr/coco",
-    "refexp_ann_path": "/workapp1219/detr/mdetr/coco/annotations",
+    "refexp_ann_path": "/workapp1219/detr/mdetr/mdetr_annotations",
     "epochs": 5,
     "lr_drop": 3
 }
