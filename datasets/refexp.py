@@ -23,7 +23,7 @@ class RefExpEvaluator(object):
         refexp_gt = copy.deepcopy(refexp_gt)
         self.refexp_gt = refexp_gt
         self.iou_types = iou_types
-        self.img_ids = self.refexp_gt.imgs.keys()
+        self.img_ids = list(self.refexp_gt.imgs.keys())
         self.predictions = {}
         self.k = k
         self.thresh_iou = thresh_iou
@@ -49,7 +49,12 @@ class RefExpEvaluator(object):
                 "refcocog": {k: 0.0 for k in self.k},
             }
             dataset2count = {"refcoco": 0.0, "refcoco+": 0.0, "refcocog": 0.0}
-            for image_id in self.img_ids:
+            # 仅汇总已有预测的图（支持 eval 子集 / Subset；全量验证时 keys 应与标注一致）
+            eval_ids = sorted(self.predictions.keys())
+            if len(eval_ids) == 0:
+                print("RefExpEvaluator: no predictions to summarize")
+                return {}
+            for image_id in eval_ids:
                 ann_ids = self.refexp_gt.getAnnIds(imgIds=image_id)
                 assert len(ann_ids) == 1
                 img_info = self.refexp_gt.loadImgs(image_id)[0]

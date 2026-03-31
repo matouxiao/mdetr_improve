@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.utils
-from torch.utils.data import ConcatDataset, DataLoader, DistributedSampler
+from torch.utils.data import ConcatDataset, DataLoader, DistributedSampler, Subset
 
 import util.dist as dist
 import util.misc as utils
@@ -269,6 +269,12 @@ def get_args_parser():
     parser.add_argument("--load", default="", help="resume from checkpoint")
     parser.add_argument("--start-epoch", default=0, type=int, metavar="N", help="start epoch")
     parser.add_argument("--eval", action="store_true", help="Only run evaluation")
+    parser.add_argument(
+        "--eval_max_samples",
+        default=0,
+        type=int,
+        help="If >0, use only the first N samples of each validation dataset (metrics are on this subset only)",
+    )
     parser.add_argument("--num_workers", default=5, type=int)
 
     # Distributed training parameters
@@ -307,6 +313,8 @@ def main(args):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
+    # cuBLAS matmul 在 CUDA 上默认非确定性；开启确定性算法时必须设置，否则 RoBERTa 等会报错
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     try:
         torch.use_deterministic_algorithms(True)
     except AttributeError:
@@ -414,6 +422,12 @@ def main(args):
     val_tuples = []
     for dset_name in args.combine_datasets_val:
         dset = build_dataset(dset_name, image_set="val", args=args)
+        if getattr(args, "eval_max_samples", 0) and args.eval_max_samples > 0:
+            full_n = len(dset)
+            n = min(args.eval_max_samples, full_n)
+            if dist.is_main_process():
+                print(f"eval_max_samples: using first {n} of {full_n} val samples for dataset '{dset_name}'")
+            dset = Subset(dset, range(n))
         sampler = (
             DistributedSampler(dset, shuffle=False) if args.distributed else torch.utils.data.SequentialSampler(dset)
         )
