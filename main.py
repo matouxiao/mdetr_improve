@@ -275,6 +275,13 @@ def get_args_parser():
         type=int,
         help="If >0, use only the first N samples of each validation dataset (metrics are on this subset only)",
     )
+    parser.add_argument(
+        "--eval_split",
+        type=str,
+        default="val",
+        choices=("train", "val"),
+        help='With --eval only: which data split to run metrics on (default "val"). Use "train" for training-set evaluation.',
+    )
     parser.add_argument("--num_workers", default=5, type=int)
 
     # Distributed training parameters
@@ -316,7 +323,13 @@ def main(args):
     # cuBLAS matmul 在 CUDA 上默认非确定性；开启确定性算法时必须设置，否则 RoBERTa 等会报错
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     try:
-        torch.use_deterministic_algorithms(True)
+        # warn_only=True：仍尽量选确定性实现；对无确定性 CUDA 核的操作（如 sine PE 的 cumsum）只警告不报错
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except TypeError:
+        try:
+            torch.use_deterministic_algorithms(True)
+        except AttributeError:
+            pass
     except AttributeError:
         pass  # 旧版 PyTorch 无此接口，跳过
 
@@ -338,16 +351,21 @@ def main(args):
     print("number of params:", n_parameters)
 
     # Set up optimizers
+    # MDETR.backbone is Joiner( CNN, position_encoding ); only CNN is child "0". Child "1" (e.g. learned PE)
+    # must use the main LR — matching on substring "backbone" wrongly put position encodings on lr_backbone.
+    def _is_backbone_cnn_param(name: str) -> bool:
+        return name.startswith("backbone.0.")
+
     param_dicts = [
         {
             "params": [
                 p
                 for n, p in model_without_ddp.named_parameters()
-                if "backbone" not in n and "text_encoder" not in n and p.requires_grad
+                if not _is_backbone_cnn_param(n) and "text_encoder" not in n and p.requires_grad
             ]
         },
         {
-            "params": [p for n, p in model_without_ddp.named_parameters() if "backbone" in n and p.requires_grad],
+            "params": [p for n, p in model_without_ddp.named_parameters() if _is_backbone_cnn_param(n) and p.requires_grad],
             "lr": args.lr_backbone,
         },
         {
@@ -420,13 +438,16 @@ def main(args):
     Val_all = namedtuple(typename="val_data", field_names=["dataset_name", "dataloader", "base_ds", "evaluator_list"])
 
     val_tuples = []
+    eval_image_set = args.eval_split if args.eval else "val"
     for dset_name in args.combine_datasets_val:
-        dset = build_dataset(dset_name, image_set="val", args=args)
+        dset = build_dataset(dset_name, image_set=eval_image_set, args=args)
         if getattr(args, "eval_max_samples", 0) and args.eval_max_samples > 0:
             full_n = len(dset)
             n = min(args.eval_max_samples, full_n)
             if dist.is_main_process():
-                print(f"eval_max_samples: using first {n} of {full_n} val samples for dataset '{dset_name}'")
+                print(
+                    f"eval_max_samples: using first {n} of {full_n} {eval_image_set} samples for dataset '{dset_name}'"
+                )
             dset = Subset(dset, range(n))
         sampler = (
             DistributedSampler(dset, shuffle=False) if args.distributed else torch.utils.data.SequentialSampler(dset)

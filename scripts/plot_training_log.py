@@ -3,7 +3,7 @@
 从 main.py 写入的 log.txt（每行一个 JSON）绘制训练/验证 loss 曲线。
 
 用法:
-  python scripts/plot_training_log.py outputs/pos_learned_r101/log.txt
+  python scripts/plot_training_log.py outputs/pos_learned_r101_e50/log.txt
   python scripts/plot_training_log.py path/to/log.txt -o /tmp/curves.png
 """
 from __future__ import annotations
