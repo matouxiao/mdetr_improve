@@ -1,4 +1,15 @@
 # Copyright (c) Aishwarya Kamath & Nicolas Carion. Licensed under the Apache License 2.0. All Rights Reserved
+
+'''
+python main.py \
+  --dataset_config configs/refcoco.json \
+  --backbone resnet101 \
+  --position_embedding learned \
+  --resume /workapp1219/detr/mdetr/outputs/pos_learned_r101_e50/checkpoint0045.pth \
+  --eval \
+  --eval_split train \
+  --eval_max_samples 1000
+'''
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import argparse
 import datetime
@@ -27,7 +38,6 @@ from datasets.refexp import RefExpEvaluator
 from engine import evaluate, train_one_epoch
 from models import build_model
 from models.postprocessors import build_postprocessors
-
 
 def get_args_parser():
     parser = argparse.ArgumentParser("Set transformer detector", add_help=False)

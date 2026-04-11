@@ -1,0 +1,9 @@
+{
+    "combine_datasets": ["refexp"],
+    "combine_datasets_val": ["refexp"],
+    "refexp_dataset_name": "refcoco",
+    "coco_path": "/workapp1219/detr/mdetr/coco",
+    "refexp_ann_path": "/workapp1219/detr/mdetr/mdetr_annotations",
+    "epochs": 10,
+    "lr_drop": 10
+}
