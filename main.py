@@ -5,7 +5,7 @@ python main.py \
   --dataset_config configs/refcoco.json \
   --backbone resnet101 \
   --position_embedding learned \
-  --resume /workapp1219/detr/mdetr/outputs/pos_learned_r101_e50/checkpoint0045.pth \
+  --resume /workapp1219/detr/mdetr/outputs/pos_learned_r101_e10/checkpoint.pth \
   --eval \
   --eval_split train \
   --eval_max_samples 1000
