@@ -21,9 +21,11 @@ OpenSource/
 coco/*
 mdetr_annotations/*
 inference_results/
-checkpoints/
-outputs/
+# checkpoints/
+# outputs/
 roberta-base/*
+*.pth
+*.safetensors
 
 
 
