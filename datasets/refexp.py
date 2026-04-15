@@ -104,7 +104,11 @@ def build(image_set, args):
             test_set = args.test_type
             ann_file = Path(args.refexp_ann_path) / f"finetune_{refexp_dataset_name}_{test_set}.json"
         else:
-            ann_file = Path(args.refexp_ann_path) / f"finetune_{refexp_dataset_name}_{image_set}.json"
+            suffix = getattr(args, "refexp_val_ann_suffix", "") or ""
+            if image_set == "val" and suffix:
+                ann_file = Path(args.refexp_ann_path) / f"finetune_{refexp_dataset_name}_val{suffix}.json"
+            else:
+                ann_file = Path(args.refexp_ann_path) / f"finetune_{refexp_dataset_name}_{image_set}.json"
     elif refexp_dataset_name in ["all"]:
         ann_file = Path(args.refexp_ann_path) / f"final_refexp_{image_set}.json"
     else:

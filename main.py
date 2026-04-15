@@ -4,11 +4,22 @@
 python main.py \
   --dataset_config configs/refcoco.json \
   --backbone resnet101 \
-  --position_embedding learned \
-  --resume /workapp1219/detr/mdetr/outputs/pos_learned_r101_e10/checkpoint.pth \
+  --position_embedding sine \
+  --resume /workapp1219/detr/mdetr/checkpoints/refcoco_resnet101_checkpoint.pth \
   --eval \
-  --eval_split train \
   --eval_max_samples 1000
+
+# val 子集（空间相对描述）：configs/refcoco_relspatial_val.json 或 --refexp_val_ann_suffix _relspatial
+
+python main.py \
+  --dataset_config configs/refcoco_relspatial_val.json \
+  --backbone resnet101 \
+  --position_embedding relative \
+  --resume /workapp1219/detr/mdetr/outputs/pos_relative_r101_e30/checkpoint.pth \
+  --eval 
+  --eval_max_samples 1000
+
+
 '''
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import argparse
@@ -74,6 +85,32 @@ def get_args_parser():
         default="",
     )
     parser.add_argument("--modulated_lvis_ann_path", type=str, default="")
+    parser.add_argument(
+        "--refexp_val_ann_suffix",
+        default="",
+        type=str,
+        help='RefCOCO/+/g 仅对 val 标注：在 "_val" 与 ".json" 之间插入该后缀。'
+        '例："_relspatial" -> finetune_refcoco_val_relspatial.json（需先用 scripts/filter_refcoco_val_relspatial.py 生成）',
+    )
+    parser.add_argument(
+        "--swanlab",
+        action="store_true",
+        help="使用 SwanLab 记录每 epoch 指标（需 pip install swanlab，首次云端需 swanlab login）",
+    )
+    parser.add_argument("--swanlab_project", default="mdetr", type=str, help="SwanLab 项目名")
+    parser.add_argument(
+        "--swanlab_run_name",
+        default="",
+        type=str,
+        help="实验名；默认用 --output-dir 的目录名",
+    )
+    parser.add_argument(
+        "--swanlab_mode",
+        default="cloud",
+        type=str,
+        choices=("cloud", "offline", "local"),
+        help="SwanLab 模式：cloud 同步网页；offline/local 仅本地 swanlog",
+    )
 
     # Training hyper-parameters
     parser.add_argument("--lr", default=1e-4, type=float)
@@ -580,104 +617,115 @@ def main(args):
         return
 
     # Runs training and evaluates after every --eval_skip epochs
+    from util.swanlab_helper import finish_swanlab, init_swanlab, log_swanlab
+
+    swanlab_active = init_swanlab(args)
+
     print("Start training")
     start_time = time.time()
     best_metric = 0.0
-    for epoch in range(args.start_epoch, args.epochs):
-        if args.epoch_chunks > 0:
-            sampler_train = samplers_train[epoch % len(samplers_train)]
-            data_loader_train = data_loaders_train[epoch % len(data_loaders_train)]
-            print(f"Starting epoch {epoch // len(data_loaders_train)}, sub_epoch {epoch % len(data_loaders_train)}")
-        else:
-            print(f"Starting epoch {epoch}")
-        if args.distributed:
-            sampler_train.set_epoch(epoch)
-        train_stats = train_one_epoch(
-            model=model,
-            criterion=criterion,
-            contrastive_criterion=contrastive_criterion,
-            qa_criterion=qa_criterion,
-            data_loader=data_loader_train,
-            weight_dict=weight_dict,
-            optimizer=optimizer,
-            device=device,
-            epoch=epoch,
-            args=args,
-            max_norm=args.clip_max_norm,
-            model_ema=model_ema,
-        )
-        if args.output_dir:
-            checkpoint_paths = [output_dir / "checkpoint.pth"]
-            # extra checkpoint before LR drop and every 2 epochs
-            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 2 == 0:
-                checkpoint_paths.append(output_dir / f"checkpoint{epoch:04}.pth")
-            for checkpoint_path in checkpoint_paths:
-                dist.save_on_master(
-                    {
-                        "model": model_without_ddp.state_dict(),
-                        "model_ema": model_ema.state_dict() if args.ema else None,
-                        "optimizer": optimizer.state_dict(),
-                        "epoch": epoch,
-                        "args": args,
-                    },
-                    checkpoint_path,
-                )
-
-        if epoch % args.eval_skip == 0:
-            test_stats = {}
-            test_model = model_ema if model_ema is not None else model
-            for i, item in enumerate(val_tuples):
-                evaluator_list = build_evaluator_list(item.base_ds, item.dataset_name)
-                item = item._replace(evaluator_list=evaluator_list)
-                postprocessors = build_postprocessors(args, item.dataset_name)
-                print(f"Evaluating {item.dataset_name}")
-                curr_test_stats = evaluate(
-                    model=test_model,
-                    criterion=criterion,
-                    contrastive_criterion=contrastive_criterion,
-                    qa_criterion=qa_criterion,
-                    postprocessors=postprocessors,
-                    weight_dict=weight_dict,
-                    data_loader=item.dataloader,
-                    evaluator_list=item.evaluator_list,
-                    device=device,
-                    args=args,
-                )
-                test_stats.update({item.dataset_name + "_" + k: v for k, v in curr_test_stats.items()})
-        else:
-            test_stats = {}
-
-        log_stats = {
-            **{f"train_{k}": v for k, v in train_stats.items()},
-            **{f"test_{k}": v for k, v in test_stats.items()},
-            "epoch": epoch,
-            "n_parameters": n_parameters,
-        }
-
-        if args.output_dir and dist.is_main_process():
-            with (output_dir / "log.txt").open("a") as f:
-                f.write(json.dumps(log_stats) + "\n")
-
-        if epoch % args.eval_skip == 0:
-            if args.do_qa:
-                metric = test_stats["gqa_accuracy_answer_total_unscaled"]
+    try:
+        for epoch in range(args.start_epoch, args.epochs):
+            if args.epoch_chunks > 0:
+                sampler_train = samplers_train[epoch % len(samplers_train)]
+                data_loader_train = data_loaders_train[epoch % len(data_loaders_train)]
+                print(f"Starting epoch {epoch // len(data_loaders_train)}, sub_epoch {epoch % len(data_loaders_train)}")
             else:
-                metric = np.mean([v[1] for k, v in test_stats.items() if "coco_eval_bbox" in k])
-
-            if args.output_dir and metric > best_metric:
-                best_metric = metric
-                checkpoint_paths = [output_dir / "BEST_checkpoint.pth"]
-                # extra checkpoint before LR drop and every 100 epochs
+                print(f"Starting epoch {epoch}")
+            if args.distributed:
+                sampler_train.set_epoch(epoch)
+            train_stats = train_one_epoch(
+                model=model,
+                criterion=criterion,
+                contrastive_criterion=contrastive_criterion,
+                qa_criterion=qa_criterion,
+                data_loader=data_loader_train,
+                weight_dict=weight_dict,
+                optimizer=optimizer,
+                device=device,
+                epoch=epoch,
+                args=args,
+                max_norm=args.clip_max_norm,
+                model_ema=model_ema,
+            )
+            if args.output_dir:
+                checkpoint_paths = [output_dir / "checkpoint.pth"]
+                # extra checkpoint before LR drop and every 2 epochs
+                if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 2 == 0:
+                    checkpoint_paths.append(output_dir / f"checkpoint{epoch:04}.pth")
                 for checkpoint_path in checkpoint_paths:
                     dist.save_on_master(
                         {
                             "model": model_without_ddp.state_dict(),
+                            "model_ema": model_ema.state_dict() if args.ema else None,
                             "optimizer": optimizer.state_dict(),
                             "epoch": epoch,
                             "args": args,
                         },
                         checkpoint_path,
                     )
+
+            if epoch % args.eval_skip == 0:
+                test_stats = {}
+                test_model = model_ema if model_ema is not None else model
+                for i, item in enumerate(val_tuples):
+                    evaluator_list = build_evaluator_list(item.base_ds, item.dataset_name)
+                    item = item._replace(evaluator_list=evaluator_list)
+                    postprocessors = build_postprocessors(args, item.dataset_name)
+                    print(f"Evaluating {item.dataset_name}")
+                    curr_test_stats = evaluate(
+                        model=test_model,
+                        criterion=criterion,
+                        contrastive_criterion=contrastive_criterion,
+                        qa_criterion=qa_criterion,
+                        postprocessors=postprocessors,
+                        weight_dict=weight_dict,
+                        data_loader=item.dataloader,
+                        evaluator_list=item.evaluator_list,
+                        device=device,
+                        args=args,
+                    )
+                    test_stats.update({item.dataset_name + "_" + k: v for k, v in curr_test_stats.items()})
+            else:
+                test_stats = {}
+
+            log_stats = {
+                **{f"train_{k}": v for k, v in train_stats.items()},
+                **{f"test_{k}": v for k, v in test_stats.items()},
+                "epoch": epoch,
+                "n_parameters": n_parameters,
+            }
+
+            if args.output_dir and dist.is_main_process():
+                with (output_dir / "log.txt").open("a") as f:
+                    f.write(json.dumps(log_stats) + "\n")
+
+            log_swanlab(args, log_stats, epoch)
+
+            if epoch % args.eval_skip == 0:
+                if args.do_qa:
+                    metric = test_stats["gqa_accuracy_answer_total_unscaled"]
+                else:
+                    metric = np.mean([v[1] for k, v in test_stats.items() if "coco_eval_bbox" in k])
+
+                if args.output_dir and metric > best_metric:
+                    best_metric = metric
+                    checkpoint_paths = [output_dir / "BEST_checkpoint.pth"]
+                    # extra checkpoint before LR drop and every 100 epochs
+                    for checkpoint_path in checkpoint_paths:
+                        dist.save_on_master(
+                            {
+                                "model": model_without_ddp.state_dict(),
+                                "optimizer": optimizer.state_dict(),
+                                "epoch": epoch,
+                                "args": args,
+                            },
+                            checkpoint_path,
+                        )
+
+    finally:
+        if swanlab_active:
+            finish_swanlab()
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
