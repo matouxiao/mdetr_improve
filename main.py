@@ -95,7 +95,7 @@ def get_args_parser():
     parser.add_argument(
         "--swanlab",
         action="store_true",
-        help="使用 SwanLab 记录每 epoch 指标（需 pip install swanlab，首次云端需 swanlab login）",
+        help="使用 SwanLab 记录训练（默认每 --swanlab_logging_steps 步）及验证指标（需 pip install swanlab）",
     )
     parser.add_argument("--swanlab_project", default="mdetr", type=str, help="SwanLab 项目名")
     parser.add_argument(
@@ -110,6 +110,12 @@ def get_args_parser():
         type=str,
         choices=("cloud", "offline", "local"),
         help="SwanLab 模式：cloud 同步网页；offline/local 仅本地 swanlog",
+    )
+    parser.add_argument(
+        "--swanlab_logging_steps",
+        default=500,
+        type=int,
+        help="SwanLab 每多少个训练步（optimizer step / batch）记录一次训练损失；0 表示不在 step 上记 train，仅在 epoch 末记 val",
     )
 
     # Training hyper-parameters
@@ -617,7 +623,7 @@ def main(args):
         return
 
     # Runs training and evaluates after every --eval_skip epochs
-    from util.swanlab_helper import finish_swanlab, init_swanlab, log_swanlab
+    from util.swanlab_helper import finish_swanlab, init_swanlab, log_swanlab_metrics
 
     swanlab_active = init_swanlab(args)
 
@@ -700,7 +706,20 @@ def main(args):
                 with (output_dir / "log.txt").open("a") as f:
                     f.write(json.dumps(log_stats) + "\n")
 
-            log_swanlab(args, log_stats, epoch)
+            if getattr(args, "swanlab", False) and dist.is_main_process():
+                if getattr(args, "swanlab_logging_steps", 0) == 0:
+                    log_swanlab_metrics(args, log_stats, step=epoch)
+                elif epoch % args.eval_skip == 0 and test_stats:
+                    val_step = (epoch + 1) * len(data_loader_train) - 1
+                    log_swanlab_metrics(
+                        args,
+                        {
+                            **{f"test_{k}": v for k, v in test_stats.items()},
+                            "epoch": epoch,
+                            "n_parameters": n_parameters,
+                        },
+                        step=val_step,
+                    )
 
             if epoch % args.eval_skip == 0:
                 if args.do_qa:

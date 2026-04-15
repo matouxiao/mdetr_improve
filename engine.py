@@ -22,6 +22,12 @@ from util.misc import targets_to
 from util.optim import adjust_learning_rate, update_ema
 
 
+def _to_float(x):
+    if torch.is_tensor(x):
+        return float(x.item())
+    return float(x)
+
+
 def train_one_epoch(
     model: torch.nn.Module,
     criterion: Optional[torch.nn.Module],
@@ -49,6 +55,11 @@ def train_one_epoch(
     metric_logger.add_meter("lr_text_encoder", SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)
     print_freq = 10
+
+    try:
+        n_batches = len(data_loader)
+    except (TypeError, NotImplementedError):
+        n_batches = None
 
     num_training_steps = int(len(data_loader) * args.epochs)
     for i, batch_dict in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
@@ -116,6 +127,29 @@ def train_one_epoch(
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(lr_backbone=optimizer.param_groups[1]["lr"])
         metric_logger.update(lr_text_encoder=optimizer.param_groups[2]["lr"])
+
+        sw_steps = getattr(args, "swanlab_logging_steps", 0) or 0
+        if (
+            getattr(args, "swanlab", False)
+            and sw_steps > 0
+            and n_batches is not None
+            and dist.is_main_process()
+        ):
+            global_step = epoch * n_batches + i
+            if (global_step + 1) % sw_steps == 0:
+                from util.swanlab_helper import log_swanlab_metrics
+
+                m = {"train_loss": _to_float(loss_value)}
+                for k, v in loss_dict_reduced_scaled.items():
+                    m[f"train_{k}"] = _to_float(v)
+                for k, v in loss_dict_reduced_unscaled.items():
+                    m[f"train_{k}"] = _to_float(v)
+                m["train_lr"] = float(optimizer.param_groups[0]["lr"])
+                m["train_lr_backbone"] = float(optimizer.param_groups[1]["lr"])
+                m["train_lr_text_encoder"] = float(optimizer.param_groups[2]["lr"])
+                m["epoch"] = float(epoch)
+                log_swanlab_metrics(args, m, step=global_step)
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)

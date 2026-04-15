@@ -39,6 +39,7 @@ def swanlab_config_from_args(args) -> Dict[str, Any]:
         "dec_layers",
         "eval_skip",
         "seed",
+        "swanlab_logging_steps",
     ]
     cfg: Dict[str, Any] = {}
     for k in keys:
@@ -87,14 +88,19 @@ def init_swanlab(args) -> bool:
     return True
 
 
-def log_swanlab(args, log_stats: Dict[str, Any], step: int) -> None:
+def log_swanlab_metrics(args, metrics: Dict[str, Any], step: int) -> None:
+    """Write scalar metrics to SwanLab at the given global step (optimizer step / batch index)."""
     import util.dist as dist
 
     if not getattr(args, "swanlab", False) or not dist.is_main_process():
         return
     import swanlab
 
-    swanlab.log(flatten_log_stats(log_stats), step=step)
+    swanlab.log(flatten_log_stats(metrics), step=step)
+
+
+# 兼容旧名
+log_swanlab = log_swanlab_metrics
 
 
 def finish_swanlab() -> None:
