@@ -52,7 +52,6 @@ class Transformer(nn.Module):
             dropout,
             activation,
             normalize_before,
-            use_encoder_relative=use_encoder_relative,
         )
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
         self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
@@ -298,10 +297,8 @@ class TransformerEncoderLayer(nn.Module):
         dropout=0.1,
         activation="relu",
         normalize_before=False,
-        use_encoder_relative=False,
     ):
         super().__init__()
-        self.use_encoder_relative = use_encoder_relative
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
@@ -327,10 +324,8 @@ class TransformerEncoderLayer(nn.Module):
         pos: Optional[Tensor] = None,
         encoder_attn_bias: Optional[Tensor] = None,
     ):
-        if self.use_encoder_relative:
-            q = k = src
-        else:
-            q = k = self.with_pos_embed(src, pos)
+        # Hybrid when encoder_attn_bias is set (--position_embedding relative): sine on Q/K + relative bias on logits.
+        q = k = self.with_pos_embed(src, pos)
         src2 = self.self_attn(
             q,
             k,
@@ -354,10 +349,7 @@ class TransformerEncoderLayer(nn.Module):
         encoder_attn_bias: Optional[Tensor] = None,
     ):
         src2 = self.norm1(src)
-        if self.use_encoder_relative:
-            q = k = src2
-        else:
-            q = k = self.with_pos_embed(src2, pos)
+        q = k = self.with_pos_embed(src2, pos)
         src2 = self.self_attn(
             q,
             k,

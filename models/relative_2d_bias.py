@@ -1,8 +1,8 @@
 # Copyright (c) Aishwarya Kamath & Nicolas Carion. Licensed under the Apache License 2.0. All Rights Reserved
 """
 2D relative position bias for encoder self-attention on flattened image tokens.
-Used when --position_embedding relative: encoder self-attn adds this bias to logits;
-decoder cross-attention still uses absolute sine PE on keys (same tensor as sine baseline).
+Used when --position_embedding relative: encoder self-attn uses sine PE on Q/K (same as sine)
+and adds this bias to attention logits (hybrid); decoder cross-attn unchanged.
 """
 import torch
 from torch import nn

@@ -2,8 +2,8 @@
 python main.py \
   --dataset_config configs/refcoco.json \
   --backbone resnet101 \
-  --position_embedding sine \
-  --output-dir ./outputs/pos_sine_r101_e5 \
+  --position_embedding relative \
+  --output-dir ./outputs/pos_mix_r101_e5 \
   --batch_size 6 \
   --lr 5e-5 \
   --lr_backbone 1e-5 \
@@ -12,8 +12,8 @@ python main.py \
   --load ./checkpoints/pretrained_resnet101_checkpoint.pth \
   --swanlab \
   --swanlab_project mdetr \
-  --swanlab --swanlab_logging_steps 100 \
-  --swanlab_run_name pos_sine_r101_e30_2 
+  --swanlab_logging_steps 100 \
+  --swanlab_run_name pos_mix_r101_e5 
 
 ##测试指令
 相对筛选数据集
