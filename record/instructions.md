@@ -9,7 +9,7 @@ python main.py \
   --lr_backbone 1e-5 \
   --text_encoder_lr 1e-5 \
   --num_workers 32 \
-  --load ./checkpoints/pretrained_resnet101_checkpoint.pth \
+  --resume ./outputs/pos_mix_r101_e5/checkpoint.pth \
   --swanlab \
   --swanlab_project mdetr \
   --swanlab_logging_steps 100 \
@@ -30,6 +30,6 @@ python main.py \
   --dataset_config configs/refcoco.json \
   --backbone resnet101 \
   --position_embedding sine \
-  --resume /workapp1219/detr/mdetr/checkpoints/refcoco_resnet101_checkpoint.pth \
+  --resume /workapp1219/detr/mdetr/outputs/pos_sine_r101_e5/checkpoint0003.pth \
   --eval  \
   --eval_max_samples 1000
