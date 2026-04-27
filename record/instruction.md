@@ -1,0 +1,18 @@
+python main.py \
+  --dataset_config configs/refcoco.json \
+  --backbone resnet101 \
+  --position_embedding relative \
+  --schedule cosine \
+  --fraction_warmup_steps 0.01 \
+  --cosine_min_lr_ratio 0.0 \
+  --output-dir ./outputs/pos_mix_r101_cosine \
+  --batch_size 6 \
+  --lr 5e-5 \
+  --lr_backbone 1e-5 \
+  --text_encoder_lr 1e-5 \
+  --num_workers 32 \
+  --load ./checkpoints/pretrained_resnet101_checkpoint.pth \
+  --swanlab \
+  --swanlab_project mdetr \
+  --swanlab_logging_steps 100 \
+  --swanlab_run_name pos_mix_r101_cosine
