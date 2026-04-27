@@ -145,11 +145,18 @@ def get_args_parser():
         "--schedule",
         default="linear_with_warmup",
         type=str,
-        choices=("step", "multistep", "linear_with_warmup", "all_linear_with_warmup"),
+        choices=("step", "multistep", "linear_with_warmup", "all_linear_with_warmup", "cosine"),
+        help="cosine: warmup then cosine decay (see util/optim.py); lr_drop unused for cosine.",
     )
     parser.add_argument("--ema", action="store_true")
     parser.add_argument("--ema_decay", type=float, default=0.9998)
     parser.add_argument("--fraction_warmup_steps", default=0.01, type=float, help="Fraction of total number of steps")
+    parser.add_argument(
+        "--cosine_min_lr_ratio",
+        default=0.0,
+        type=float,
+        help="For --schedule cosine: minimum lr as fraction of each param group's base lr (0 = decay to 0).",
+    )
 
     # Model parameters
     parser.add_argument(

@@ -1,5 +1,6 @@
 # Copyright (c) Aishwarya Kamath & Nicolas Carion. Licensed under the Apache License 2.0. All Rights Reserved
 """Collections of utilities related to optimization."""
+import math
 from bisect import bisect_right
 
 import torch
@@ -51,6 +52,8 @@ def adjust_learning_rate(
                    "linear_with_warmup": same as "step" for backbone + transformer, but for the text encoder, linearly
                                          increase for a fraction of the training, then linearly decrease back to 0.
                    "all_linear_with_warmup": same as "linear_with_warmup" for all learning rates involved.
+                   "cosine": linear warmup for fraction_warmup_steps of total steps, then cosine decay to
+                             cosine_min_lr_ratio * base for transformer, backbone, and text encoder (same multiplier).
 
     """
     num_warmup_steps: int = round(args.fraction_warmup_steps * num_training_steps)
@@ -79,6 +82,18 @@ def adjust_learning_rate(
                 float(num_training_steps - curr_step) / float(max(1, num_training_steps - num_warmup_steps)),
             )
         gamma = text_encoder_gamma
+    elif args.schedule == "cosine":
+        cosine_min = float(getattr(args, "cosine_min_lr_ratio", 0.0))
+        cosine_min = max(0.0, min(1.0, cosine_min))
+        if num_warmup_steps > 0 and curr_step < num_warmup_steps:
+            gamma = float(curr_step + 1) / float(num_warmup_steps)
+        else:
+            t = curr_step - num_warmup_steps
+            t_max = max(1, num_training_steps - num_warmup_steps)
+            progress = float(t) / float(max(1, t_max - 1))
+            progress = min(1.0, progress)
+            gamma = cosine_min + (1.0 - cosine_min) * 0.5 * (1.0 + math.cos(math.pi * progress))
+        text_encoder_gamma = gamma
     else:
         raise NotImplementedError
 
