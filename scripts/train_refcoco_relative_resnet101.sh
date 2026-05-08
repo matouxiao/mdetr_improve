@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # RefCOCO：相对位置 — 使用 --position_embedding relative（编码器 2D 相对偏置，见 models/transformer.py）
+# bias_table 初始为全 0：第 0 轮验证会接近「仅 sine 预训练」的高分；若不先冻结，首轮训练就会把偏置学坏导致指标断崖。
+# freeze_relative_bias_epochs 在 configs/refcoco.json（默认 8）或由 --freeze_relative_bias_epochs 覆盖。
 # 勿加 --contrastive_align_loss：main.py 无此参数，argparse 缩写会误匹配 --contrastive_align_loss_coef 导致报错。
 # contrastive_align_loss / aux_loss 默认 True（仅 --no_contrastive_align_loss / --no_aux_loss 可关）。
 # 学习率策略见 configs/refcoco.json：默认 cosine（warmup + 余弦衰减），避免 linear_with_warmup

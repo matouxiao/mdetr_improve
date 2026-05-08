@@ -196,6 +196,13 @@ def get_args_parser():
         help="Type of positional embedding: sine/learned (absolute on grid); "
         "relative = encoder self-attn uses 2D relative bias, decoder still uses sine on keys",
     )
+    parser.add_argument(
+        "--freeze_relative_bias_epochs",
+        type=int,
+        default=0,
+        help="When --position_embedding relative: freeze transformer.relative_bias_module for the first "
+        "N epochs (bias_table starts at 0; training it too early often collapses val metrics). 0 = no freeze.",
+    )
 
     # Transformer
     parser.add_argument(
@@ -668,6 +675,22 @@ def main(args):
                 print(f"Starting epoch {epoch}")
             if args.distributed:
                 sampler_train.set_epoch(epoch)
+            # relative 2D bias 全零初始化：前几轮若立刻训练 bias_table，易破坏预训练 encoder 注意力，验证集会从 ~0.84 断崖式掉到 ~0.35
+            rb = getattr(model_without_ddp.transformer, "relative_bias_module", None)
+            if rb is not None and getattr(args, "position_embedding", "") == "relative":
+                n_fr = int(getattr(args, "freeze_relative_bias_epochs", 0) or 0)
+                if n_fr > 0:
+                    train_rb = epoch >= n_fr
+                    for p in rb.parameters():
+                        p.requires_grad_(train_rb)
+                    if dist.is_main_process():
+                        if not train_rb:
+                            print(
+                                f"Epoch {epoch}: encoder relative bias_table frozen "
+                                f"(freeze_relative_bias_epochs={n_fr})"
+                            )
+                        elif epoch == n_fr:
+                            print(f"Epoch {epoch}: encoder relative bias_table unfrozen")
             train_stats = train_one_epoch(
                 model=model,
                 criterion=criterion,

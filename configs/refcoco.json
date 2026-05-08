@@ -8,5 +8,6 @@
     "schedule": "cosine",
     "fraction_warmup_steps": 0.01,
     "cosine_min_lr_ratio": 0.01,
-    "lr_drop": 15
+    "lr_drop": 15,
+    "freeze_relative_bias_epochs": 8
 }
