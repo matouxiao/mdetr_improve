@@ -4,6 +4,9 @@
     "refexp_dataset_name": "refcoco",
     "coco_path": "/workapp1219/detr/mdetr/coco",
     "refexp_ann_path": "/workapp1219/detr/mdetr/mdetr_annotations",
-    "epochs": 70,
-    "lr_drop": 10
+    "epochs": 50,
+    "schedule": "cosine",
+    "fraction_warmup_steps": 0.01,
+    "cosine_min_lr_ratio": 0.01,
+    "lr_drop": 15
 }

@@ -555,16 +555,37 @@ def main(args):
             checkpoint = torch.hub.load_state_dict_from_url(args.resume, map_location="cpu", check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location="cpu")
-        model_without_ddp.load_state_dict(checkpoint["model"])
-        if not args.eval and "optimizer" in checkpoint and "epoch" in checkpoint:
+        ckpt_sd = checkpoint["model"]
+        # 从 sine 预训练权重加载到 --position_embedding relative 时，checkpoint 无 relative_bias_module，须 strict=False
+        skip_optimizer_resume = False
+        if getattr(args, "position_embedding", "sine") == "relative" and not any(
+            k.startswith("transformer.relative_bias_module") for k in ckpt_sd.keys()
+        ):
+            skip_optimizer_resume = True
+            if dist.is_main_process():
+                print(
+                    "Note: checkpoint has no transformer.relative_bias_module; "
+                    "loading with strict=False (relative bias from scratch). Optimizer state will not be resumed."
+                )
+        _ink = model_without_ddp.load_state_dict(ckpt_sd, strict=False)
+        if dist.is_main_process() and hasattr(_ink, "missing_keys") and _ink.missing_keys:
+            print(f"load_state_dict: {len(_ink.missing_keys)} missing key(s) (e.g. new modules), {len(_ink.unexpected_keys)} unexpected.")
+        if (
+            not args.eval
+            and "optimizer" in checkpoint
+            and "epoch" in checkpoint
+            and not skip_optimizer_resume
+        ):
             optimizer.load_state_dict(checkpoint["optimizer"])
             args.start_epoch = checkpoint["epoch"] + 1
+        elif skip_optimizer_resume and not args.eval:
+            args.start_epoch = 0
         if args.ema:
             if "model_ema" not in checkpoint:
                 print("WARNING: ema model not found in checkpoint, resetting to current model")
                 model_ema = deepcopy(model_without_ddp)
             else:
-                model_ema.load_state_dict(checkpoint["model_ema"])
+                model_ema.load_state_dict(checkpoint["model_ema"], strict=False)
 
     def build_evaluator_list(base_ds, dataset_name):
         """Helper function to build the list of evaluators for a given dataset"""
